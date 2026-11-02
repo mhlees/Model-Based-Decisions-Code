@@ -174,3 +174,146 @@ def plot_phase_plot(phase_df: pd.DataFrame, out_path: Optional[str] = None) -> s
     plt.savefig(out_path, dpi=140, bbox_inches="tight")
     plt.close()
     return out_path
+
+
+# -----------------------------
+# New Plotting Routines for Refactored Assignment 3
+# -----------------------------
+
+def plot_phase_X0_vs_I0(
+    phase_df: pd.DataFrame,
+    out_path: Optional[str] = None,
+    title: str = "Figure 1: Baseline Tipping Landscape ($X^*$ over $X_0, I_0$)",
+) -> str:
+    """Plot 2D heatmap of final adoption X* as a function of (X0, I0).
+
+    phase_df columns: ['X0', 'I0', 'X_final']
+    """
+    pivot = phase_df.pivot(index="I0", columns="X0", values="X_final").sort_index().sort_index(axis=1)
+    I0s = pivot.index.to_numpy()
+    X0s = pivot.columns.to_numpy()
+
+    fig, ax = plt.subplots(figsize=(7.5, 5.5), constrained_layout=True)
+    im = ax.imshow(
+        pivot.to_numpy(),
+        origin="lower",
+        extent=[X0s[0], X0s[-1], I0s[0], I0s[-1]],
+        aspect="auto",
+        vmin=0.0,
+        vmax=1.0,
+        cmap="viridis",
+    )
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Final Adoption Fraction $X^*$", fontsize=11)
+
+    # Separatrix contour line at X* = 0.5
+    X_grid, I_grid = np.meshgrid(X0s, I0s)
+    try:
+        cs = ax.contour(X_grid, I_grid, pivot.to_numpy(), levels=[0.5], colors="red", linewidths=2.0)
+        ax.clabel(cs, inline=True, fontsize=10, fmt={0.5: "Separatrix (X*=0.5)"})
+    except Exception:
+        pass
+
+    ax.set_xlabel("Initial Adoption Fraction $X_0$", fontsize=12)
+    ax.set_ylabel("Initial Infrastructure $I_0$", fontsize=12)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.15, linestyle=":")
+
+    if out_path is None:
+        out_path = _default_plot_path("figure1_phase_heatmap.png")
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+    return out_path
+
+
+def plot_topology_comparison(
+    er_X: list[np.ndarray],
+    er_I: list[np.ndarray],
+    ba_X: list[np.ndarray],
+    ba_I: list[np.ndarray],
+    out_path: Optional[str] = None,
+    title: str = "Figure 2: Network Structure Comparison (ER vs. BA near Tipping)",
+) -> str:
+    """Plot comparative dynamic time-series traces of X(t) and I(t) for ER vs. BA."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True, constrained_layout=True)
+    t = np.arange(len(er_X[0]))
+
+    configs = [
+        ("Erdős–Rényi (Random, low clustering)", er_X, er_I, axes[0], "steelblue"),
+        ("Barabási–Albert (Scale-free, hubs)", ba_X, ba_I, axes[1], "darkorange"),
+    ]
+
+    for label, x_list, i_list, ax, color in configs:
+        x_mat = np.vstack(x_list)
+        i_mat = np.vstack(i_list)
+        x_mean = x_mat.mean(axis=0)
+        x_std = x_mat.std(axis=0)
+
+        # Plot individual trajectories (thin)
+        for X in x_list:
+            ax.plot(t, X, color=color, alpha=0.25, linewidth=1.0)
+
+        # Plot mean trajectory with +/- 1 std
+        ax.plot(t, x_mean, color=color, linewidth=2.5, label="Mean $X(t)$")
+        ax.fill_between(t, np.clip(x_mean - x_std, 0, 1), np.clip(x_mean + x_std, 0, 1), color=color, alpha=0.2, label="$\pm 1$ Std Dev")
+
+        # Mean infrastructure
+        i_mean = i_mat.mean(axis=0)
+        ax.plot(t, i_mean, color="forestgreen", linestyle="--", linewidth=2.0, label="Mean Infrastructure $I(t)$")
+
+        success_rate = np.mean([X[-1] > 0.5 for X in x_list]) * 100
+        ax.set_title(f"{label}\nSuccess Rate: {success_rate:.0f}%", fontsize=11, fontweight="bold")
+        ax.set_xlabel("Time Step $t$", fontsize=11)
+        ax.set_ylabel("Adoption Fraction $X(t)$", fontsize=11)
+        ax.set_ylim(-0.02, 1.02)
+        ax.grid(True, alpha=0.25, linestyle=":")
+        ax.legend(loc="center right", fontsize=9)
+
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    if out_path is None:
+        out_path = _default_plot_path("figure2_topology_comparison.png")
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+    return out_path
+
+
+def plot_intervention_comparison(
+    baseline_X: list[np.ndarray],
+    intervention_X: list[np.ndarray],
+    policy_label: str = "Intervention",
+    timing_window: Optional[tuple[int, int]] = None,
+    out_path: Optional[str] = None,
+    title: str = "Figure 3: Policy Intervention vs. Baseline",
+) -> str:
+    """Plot baseline vs. intervention comparison showing stochastic trajectories and mean."""
+    fig, ax = plt.subplots(figsize=(9, 5.2), constrained_layout=True)
+    t = np.arange(len(baseline_X[0]))
+
+    b_mat = np.vstack(baseline_X)
+    i_mat = np.vstack(intervention_X)
+
+    # Plot baseline
+    for X in baseline_X:
+        ax.plot(t, X, color="slategray", alpha=0.2, linewidth=1.0)
+    ax.plot(t, b_mat.mean(axis=0), color="dimgray", linewidth=2.5, label=f"Baseline (Unforced, mean final={b_mat[:, -1].mean():.2f})")
+
+    # Plot intervention
+    for X in intervention_X:
+        ax.plot(t, X, color="crimson", alpha=0.2, linewidth=1.0)
+    ax.plot(t, i_mat.mean(axis=0), color="crimson", linewidth=2.5, label=f"{policy_label} (mean final={i_mat[:, -1].mean():.2f})")
+
+    if timing_window is not None:
+        ax.axvspan(timing_window[0], timing_window[1], color="gold", alpha=0.2, label=f"Active Window [{timing_window[0]}, {timing_window[1]}]")
+
+    ax.set_xlabel("Time Step $t$", fontsize=12)
+    ax.set_ylabel("Adoption Fraction $X(t)$", fontsize=12)
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_ylim(-0.02, 1.02)
+    ax.grid(True, alpha=0.25, linestyle=":")
+    ax.legend(loc="center right", fontsize=10)
+
+    if out_path is None:
+        out_path = _default_plot_path("figure3_policy_evaluation.png")
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+    return out_path

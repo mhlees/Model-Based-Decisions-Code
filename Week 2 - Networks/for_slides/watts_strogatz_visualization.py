@@ -100,7 +100,7 @@ class WattsStrogatzVisualizer:
         neighbors = []
         for i in range(1, self.k//2 + 1):
             left_neighbor = (target_node - i) % self.n
-            right_neighbor = (target_node + i) % self.  n
+            right_neighbor = (target_node + i) % self.n
             neighbors.extend([left_neighbor, right_neighbor])
         
         # Include the target node itself
@@ -293,7 +293,88 @@ class WattsStrogatzVisualizer:
                                     linewidth=width, alpha=0.8)
                     ax.add_patch(patch)
 
-    def draw_network(self, ax, graph, title, beta_value, show_metrics=True):
+    def _avg_shortest_path_length_connected(self, G):
+        """Average shortest path length on the largest connected component (exact)."""
+        try:
+            if nx.is_connected(G):
+                return nx.average_shortest_path_length(G)
+            largest_cc = max(nx.connected_components(G), key=len)
+            H = G.subgraph(largest_cc).copy()
+            return nx.average_shortest_path_length(H)
+        except Exception:
+            return float('inf')
+
+    def _largest_connected_subgraph(self, G):
+        """Return the largest connected component subgraph."""
+        try:
+            if G.number_of_nodes() == 0:
+                return G
+            if nx.is_connected(G):
+                return G
+            largest_cc = max(nx.connected_components(G), key=len)
+            return G.subgraph(largest_cc).copy()
+        except Exception:
+            return G
+
+    def _approx_average_shortest_path_length_connected(self, G, sample_size=300, seed=None):
+        """Fast approximation of average shortest path length on largest component.
+
+        Samples up to `sample_size` source nodes and averages single-source
+        shortest-path lengths to all reachable nodes. This is typically much
+        faster than computing all-pairs for larger n, while tracking trends.
+        """
+        H = self._largest_connected_subgraph(G)
+        n = H.number_of_nodes()
+        if n <= 1:
+            return float('inf')
+
+        rng = np.random.default_rng(seed)
+        nodes = list(H.nodes())
+        m = min(sample_size, n)
+        # Choose unique sample sources without replacement when possible
+        sources = list(rng.choice(nodes, size=m, replace=False))
+
+        total_dist = 0.0
+        pair_count = 0
+        for s in sources:
+            lengths = nx.single_source_shortest_path_length(H, s)
+            # exclude self distance (0)
+            if len(lengths) > 1:
+                total_dist += sum(d for v, d in lengths.items() if v != s)
+                pair_count += (len(lengths) - 1)
+
+        return (total_dist / pair_count) if pair_count > 0 else float('inf')
+
+    def compute_ws_metrics(self, beta_values, trials=5, seed=123, metrics_n=None, approx=True, sample_size=300):
+        """Compute clustering C and path length L across betas, averaged over trials.
+
+        Parameters:
+        - beta_values: iterable of rewiring probabilities
+        - trials: number of random graphs per beta to average
+        - seed: RNG seed for reproducibility
+        - metrics_n: if provided, use this node count for metrics graphs
+        - approx: use fast path-length approximation when True
+        - sample_size: number of sources for approximation
+        """
+        rng = np.random.default_rng(seed)
+        C = []
+        L = []
+        n_local = metrics_n or self.n
+        for beta in beta_values:
+            c_vals = []
+            l_vals = []
+            for _ in range(trials):
+                g = nx.watts_strogatz_graph(n_local, self.k, beta, seed=int(rng.integers(0, 1_000_000)))
+                c_vals.append(nx.average_clustering(g))
+                if approx:
+                    l_vals.append(self._approx_average_shortest_path_length_connected(g, sample_size=sample_size, seed=int(rng.integers(0, 1_000_000))))
+                else:
+                    l_vals.append(self._avg_shortest_path_length_connected(g))
+            C.append(float(np.mean(c_vals)))
+            L.append(float(np.mean(l_vals)))
+        return np.array(C), np.array(L)
+
+    def draw_network(self, ax, graph, title, beta_value, show_metrics=True, node_scale=1.3):
         """
         Draw a single network with proper styling.
         
@@ -310,7 +391,7 @@ class WattsStrogatzVisualizer:
         show_metrics : bool
             Whether to show network metrics
         """
-        positions = self.get_circular_positions(1.4)
+        positions = self.get_circular_positions(node_scale)
         local_edges, long_range_edges = self.classify_edges(graph, positions)
         
         # Clear the axes
@@ -348,11 +429,11 @@ class WattsStrogatzVisualizer:
                                  node_color='red', node_size=150)
         
         # Set title (moved down)
-        ax.set_title(title, fontsize=16, fontweight='bold', pad=10, y=1.0)
+        ax.set_title(title, fontsize=20, fontweight='bold', pad=10, y=1.0)
         
         # Add beta value annotation (moved down)
-        ax.text(0, -1.8, f'β = {beta_value}', fontsize=14, ha='center',
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+        ax.text(0, -1.8, f'β = {beta_value}', fontsize=18, ha='center',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
         
         # Add network metrics if requested (repositioned)
         if show_metrics:
@@ -363,8 +444,8 @@ class WattsStrogatzVisualizer:
                 path_length = float('inf')
             
             metrics_text = f'C = {clustering:.3f}\nL = {path_length:.2f}'
-            ax.text(1.4, 1.0, metrics_text, fontsize=11, ha='left', va='top',
-                   bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', alpha=0.8))
+            ax.text(1.4, 1.0, metrics_text, fontsize=15, ha='left', va='top',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', alpha=0.8))
         
         # Set axis limits to make networks bigger
         ax.set_xlim(-2.0, 2.0)
@@ -379,7 +460,7 @@ class WattsStrogatzVisualizer:
         # Create figure with three subplots
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
         fig.suptitle('Watts-Strogatz Model: Network Transition', 
-                    fontsize=16, fontweight='bold', y=1.05)
+                    fontsize=24, fontweight='bold', y=1.05)
         
         graphs = []
         for i, (beta, title) in enumerate(zip(beta_values, titles)):
@@ -392,7 +473,7 @@ class WattsStrogatzVisualizer:
         
         # Add annotations for clustering and path length
         fig.text(0.5, 0.02, 'increasing connection probability\nredistribution from short-range to long-range', 
-                ha='center', fontsize=12, style='italic')
+                ha='center', fontsize=18, style='italic')
         
         # Add arrow showing the transition
         from matplotlib.patches import FancyArrowPatch
@@ -476,15 +557,75 @@ class WattsStrogatzVisualizer:
         except:
             pass
 
+    def create_classic_ws_figure(self):
+        """Create figure matching the classic WS diagram with normalized curves."""
+        # Top row networks
+        beta_top = [0.0, 0.05, 1.0]
+        titles = ['Regular', 'Small-world', 'Random']
+        graphs = [self.create_watts_strogatz_graph(b, seed=42) for b in beta_top]
+
+        # Metrics over log-spaced beta (use larger n and fast path-length)
+        beta_vals = np.logspace(-4, 0, 35)
+        metrics_n = 300
+        C_vals, L_vals = self.compute_ws_metrics(beta_vals, trials=80, seed=123,
+                                                metrics_n=metrics_n, approx=True,
+                                                sample_size=300)
+        # Baseline (beta=0) with the same metrics_n
+        G0 = nx.watts_strogatz_graph(metrics_n, self.k, 0.0, seed=42)
+        C0 = nx.average_clustering(G0)
+        L0 = self._approx_average_shortest_path_length_connected(G0, sample_size=300, seed=123)
+        C_norm = C_vals / C0 if C0 > 0 else C_vals
+        L_norm = L_vals / L0 if L0 > 0 else L_vals
+
+        # Figure composition
+        fig = plt.figure(figsize=(12, 9))
+        import matplotlib.gridspec as gridspec
+        gs = gridspec.GridSpec(2, 3, height_ratios=[1, 1.3], hspace=0.35)
+        axes_top = [fig.add_subplot(gs[0, i]) for i in range(3)]
+        ax_bottom = fig.add_subplot(gs[1, :])
+
+        # Draw networks
+        for ax, G, title, beta in zip(axes_top, graphs, titles, beta_top):
+            self.draw_network(ax, G, title, beta, show_metrics=False, node_scale=1.25)
+            #ax.text(0, -2.70, f'p = {beta}', fontsize=12, ha='center')
+
+        # Arrow and label
+        from matplotlib.patches import FancyArrowPatch
+        arrow = FancyArrowPatch((0.18, 0.58), (0.82, 0.58), arrowstyle='->', mutation_scale=20,
+                                color='black', linewidth=1.8, transform=fig.transFigure)
+        fig.patches.append(arrow)
+        fig.text(0.5, 0.56, 'increasing randomness', ha='center', fontsize=14)
+
+        # Bottom plot
+        ax_bottom.set_xscale('log')
+        ax_bottom.plot(beta_vals, L_norm, 'o', color='black', markersize=5, label=r'$L_\beta/L_0$')
+        ax_bottom.plot(beta_vals, C_norm, 'o', markerfacecolor='none', markeredgecolor='black',
+                       markersize=5, label=r'$C_\beta/C_0$')
+        ax_bottom.set_xlabel(r'Rewiring Probability ($\beta$)', fontsize=16)
+        ax_bottom.set_ylabel('Clustering, Path Length', fontsize=16)
+        ax_bottom.tick_params(axis='both', which='both', labelsize=14)
+        ax_bottom.set_ylim(0, max(1.05, float(np.nanmax([np.nanmax(L_norm), np.nanmax(C_norm)]))))
+        ax_bottom.grid(True, which='both', linestyle=':', alpha=0.4)
+        ax_bottom.legend(loc='upper right', frameon=False, fontsize=14)
+
+        plt.tight_layout()
+        plt.savefig('watts_strogatz_classic.png', dpi=300, bbox_inches='tight')
+        plt.savefig('watts_strogatz_classic.pdf', dpi=300, bbox_inches='tight')
+        print("\u2713 Watts-Strogatz classic figure saved as 'watts_strogatz_classic.png' and '.pdf'")
+        return fig
+
 def main():
     """Main function to create Watts-Strogatz visualization."""
     print("Watts-Strogatz Model Visualization")
     print("="*40)
     
-    # Initialize visualizer with 20 nodes, each connected to 4 nearest neighbors
-    visualizer = WattsStrogatzVisualizer(n=40, k=4)
+    # Initialize visualizer (node count can be tuned for aesthetics)
+    visualizer = WattsStrogatzVisualizer(n=24, k=4)
     
-    # Create the transition visualization
+    # Create the classic WS diagram (networks + normalized curves)
+    visualizer.create_classic_ws_figure()
+
+    # Create the transition visualization panel
     fig, graphs = visualizer.create_transition_visualization()
     
     # Create detailed analysis

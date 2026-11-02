@@ -20,6 +20,8 @@ from ev_core import (
     set_initial_adopters,
     final_mean_adoption_vs_ratio,
     phase_sweep_X0_vs_ratio,
+    phase_sweep_X0_vs_I0,
+    run_simulation_trial,
 )
 from ev_plotting import (
     plot_fanchart,
@@ -27,6 +29,9 @@ from ev_plotting import (
     plot_density,
     plot_ratio_sweep,
     plot_phase_plot,
+    plot_phase_X0_vs_I0,
+    plot_topology_comparison,
+    plot_intervention_comparison,
 )
 
 
@@ -135,6 +140,7 @@ def run_timeseries_trial(
             scenario["X0_frac"],
             method=scenario.get("init_method", "random"),
             seed=seed,
+            high=scenario.get("high", True),
         )
 
     for t in range(T):
@@ -374,6 +380,131 @@ def phase_sweep_df(
         for j, ratio in enumerate(ratio_values):
             rows.append((float(X0), float(ratio), float(X_final[j, i])))
     return pd.DataFrame(rows, columns=["X0", "ratio", "X_final"])
+
+
+def phase_sweep_X0_vs_I0_df(
+    X0_values: Optional[np.ndarray] = None,
+    I0_values: Optional[np.ndarray] = None,
+    scenario_kwargs: Optional[Dict] = None,
+    T: int = 150,
+    n_seeds: int = 10,
+    strategy_choice_func: str = "imitate",
+    tau: float = 1.0,
+    max_workers: int | None = None,
+    backend: str = "process",
+) -> pd.DataFrame:
+    """Compute tidy DataFrame of mean final adoption X* over (X0, I0).
+
+    Columns: ['X0', 'I0', 'X_final']
+    """
+    if X0_values is None:
+        X0_values = np.linspace(0.0, 1.0, 15)
+    if I0_values is None:
+        I0_values = np.linspace(0.0, 1.0, 15)
+
+    scenario = {
+        "a0": 1.0,
+        "beta_I": 2.5,
+        "b": 1.0,
+        "g_I": 0.1,
+        "network_type": "random",
+        "n_nodes": 200,
+        "p": 0.03,
+        "m": 3,
+        "init_method": "random",
+    }
+    if scenario_kwargs:
+        scenario.update(scenario_kwargs)
+
+    X_final = phase_sweep_X0_vs_I0(
+        X0_values=X0_values,
+        I0_values=I0_values,
+        a0=scenario["a0"],
+        beta_I=scenario["beta_I"],
+        b=scenario["b"],
+        g_I=scenario["g_I"],
+        T=T,
+        network_type=scenario["network_type"],
+        n_nodes=scenario["n_nodes"],
+        p=scenario["p"],
+        m=scenario["m"],
+        n_seeds=n_seeds,
+        strategy_choice_func=strategy_choice_func,
+        tau=tau,
+        init_method=scenario["init_method"],
+        max_workers=max_workers,
+        backend=backend,
+    )
+
+    rows = []
+    for i, I0 in enumerate(I0_values):
+        for j, X0 in enumerate(X0_values):
+            rows.append((float(X0), float(I0), float(X_final[i, j])))
+    return pd.DataFrame(rows, columns=["X0", "I0", "X_final"])
+
+
+def collect_topology_comparison_trials(
+    X0_frac: float = 0.20,
+    I0: float = 0.20,
+    n_trials: int = 15,
+    T: int = 150,
+    n_nodes: int = 200,
+    p: float = 0.03,
+    m: int = 3,
+    seed_base: int = 42,
+    a0: float = 1.0,
+    beta_I: float = 2.5,
+    b: float = 1.0,
+    g_I: float = 0.1,
+    strategy_choice_func: str = "imitate",
+) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[np.ndarray], pd.DataFrame, pd.DataFrame]:
+    """Run ER vs BA comparison trials near the critical tipping threshold."""
+    er_scenario = {
+        "a0": a0,
+        "beta_I": beta_I,
+        "b": b,
+        "g_I": g_I,
+        "I0": I0,
+        "network_type": "random",
+        "n_nodes": n_nodes,
+        "p": p,
+        "X0_frac": X0_frac,
+        "init_method": "random",
+    }
+    ba_scenario = {
+        "a0": a0,
+        "beta_I": beta_I,
+        "b": b,
+        "g_I": g_I,
+        "I0": I0,
+        "network_type": "BA",
+        "n_nodes": n_nodes,
+        "m": m,
+        "X0_frac": X0_frac,
+        "init_method": "random",
+    }
+
+    er_X, er_I, ba_X, ba_I = [], [], [], []
+    for i in range(n_trials):
+        seed = seed_base + i
+        x_er, i_er, _ = run_timeseries_trial(T=T, scenario_kwargs=er_scenario, seed=seed, strategy_choice_func=strategy_choice_func)
+        x_ba, i_ba, _ = run_timeseries_trial(T=T, scenario_kwargs=ba_scenario, seed=seed, strategy_choice_func=strategy_choice_func)
+        er_X.append(x_er)
+        er_I.append(i_er)
+        ba_X.append(x_ba)
+        ba_I.append(i_ba)
+
+    def summarize(X_list: List[np.ndarray]) -> pd.DataFrame:
+        mat = np.vstack(X_list)
+        return pd.DataFrame({
+            "X_mean": mat.mean(axis=0),
+            "X_std": mat.std(axis=0),
+            "X_med": np.median(mat, axis=0),
+            "X_q10": np.quantile(mat, 0.10, axis=0),
+            "X_q90": np.quantile(mat, 0.90, axis=0),
+        })
+
+    return er_X, er_I, ba_X, ba_I, summarize(er_X), summarize(ba_X)
 
 
 def plot_intervention_fanchart(
