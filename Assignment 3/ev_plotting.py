@@ -206,11 +206,11 @@ def plot_phase_X0_vs_I0(
     cbar = fig.colorbar(im, ax=ax)
     cbar.set_label("Final Adoption Fraction $X^*$", fontsize=11)
 
-    # Separatrix contour line at X* = 0.5
+    # Tipping boundary contour line at X* = 0.5
     X_grid, I_grid = np.meshgrid(X0s, I0s)
     try:
         cs = ax.contour(X_grid, I_grid, pivot.to_numpy(), levels=[0.5], colors="red", linewidths=2.0)
-        ax.clabel(cs, inline=True, fontsize=10, fmt={0.5: "Separatrix (X*=0.5)"})
+        ax.clabel(cs, inline=True, fontsize=10, fmt={0.5: "Tipping Boundary (X*=0.5)"})
     except Exception:
         pass
 

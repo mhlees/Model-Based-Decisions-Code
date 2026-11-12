@@ -22,10 +22,13 @@ This folder contains a network-based agent model of EV adoption framed as a Stag
 - Agents and Strategies
   - Each node hosts one agent with strategy `"C"` (adopt EV) or `"D"` (stick with ICE).
   - Agents interact with neighbors to accumulate payoffs, then update strategies synchronously.
-- Payoffs
+- Payoffs (Degree-Normalised)
   - Coordination payoff for `C` when meeting another `C`: `a_I = a0 + beta_I * I`.
   - Meeting `D`: the `C` agent gets `0`, the `D` agent gets `b`.
   - Two `D` agents each get `b`.
+  - **Degree Normalisation:** To enable fair comparison across topologies (from complete graphs with $k=199$ to sparse networks with $\langle k \rangle \approx 6$) and mitigate hub degree bias, each agent's round payoff is divided by its node degree $k_i$:
+    - For defection: $\bar{\pi}_i(D) = b = 1.0$ (constant).
+    - For adoption: $\bar{\pi}_i(C) = x_i \cdot a(I)$, where $x_i = k_{i,C} / k_i$ is the local fraction of EV adopters among neighbours.
 - Infrastructure Dynamics
   - Infrastructure level `I` is a global scalar in `[0, 1]`.
   - Update rule after all agents advance: `I(t+1) = clip(I(t) + g_I * (X(t) - I(t)), 0, 1)`, where `X` is the fraction of `C` agents.
@@ -35,6 +38,7 @@ This folder contains a network-based agent model of EV adoption framed as a Stag
   - `logit`: probabilistic choice via softmax with temperature `tau`:
     - Compute expected payoffs vs neighbors, then choose `C` with probability `exp(pi_C/tau) / (exp(pi_C/tau) + exp(pi_D/tau))`.
 - Network Structures
+  - `complete` (Fully connected): all-to-all connectivity (mean-field baseline for Part 1).
   - `random` (Erdős–Rényi): parameters `n_nodes`, edge probability `p`.
   - `BA` (Barabási–Albert): parameters `n_nodes`, `m` edges attached per new node.
 - Data Collection
@@ -48,7 +52,7 @@ This folder contains a network-based agent model of EV adoption framed as a Stag
 - `g_I` — Infrastructure adjustment rate toward current adoption.
 - `I0` — Initial infrastructure level.
 - `n_nodes` — Number of agents in the network.
-- `network_type` — `"random"` or `"BA"`.
+- `network_type` — `"complete"`, `"random"`, or `"BA"`.
 - `p` — Edge probability (ER only).
 - `m` — Edges attached per new node (BA only).
 - `strategy_choice_func` — `"imitate"` or `"logit"`.

@@ -407,7 +407,7 @@ def phase_sweep_X0_vs_I0_df(
         "beta_I": 2.5,
         "b": 1.0,
         "g_I": 0.1,
-        "network_type": "random",
+        "network_type": "complete",
         "n_nodes": 200,
         "p": 0.03,
         "m": 3,

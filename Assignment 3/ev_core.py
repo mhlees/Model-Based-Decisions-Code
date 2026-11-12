@@ -45,14 +45,14 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 #
 ####################################
 def choose_strategy_imitate(agent, neighbors):
-    """Choose strategy of the highest-payoff neighbour (including self)."""
+    """Choose strategy of the highest degree-normalised payoff neighbour (including self)."""
     candidates = neighbors + [agent]
     best = max(candidates, key=lambda a: a.payoff)
     return best.strategy
 
 
 def choose_strategy_logit(agent, neighbors, a_I, b, tau):
-    """Choose strategy using logit / softmax choice.
+    """Choose strategy using logit / softmax choice based on degree-normalised expected payoffs.
 
     Parameters
     - agent: the agent choosing a strategy
@@ -61,7 +61,11 @@ def choose_strategy_logit(agent, neighbors, a_I, b, tau):
     - b: defection payoff
     - tau: temperature parameter for softmax
     """
-    # compute expected payoffs for C and D
+    if not neighbors:
+        return agent.strategy
+
+    # compute expected degree-normalised payoffs for C and D
+    k = len(neighbors)
     pi_C = 0.0
     pi_D = 0.0
     for other in neighbors:
@@ -72,6 +76,9 @@ def choose_strategy_logit(agent, neighbors, a_I, b, tau):
         else:
             pi_C += 0.0
             pi_D += b
+
+    pi_C /= k
+    pi_D /= k
 
     # softmax choice
     denom = np.exp(pi_C / tau) + np.exp(pi_D / tau)
@@ -87,7 +94,7 @@ def choose_strategy_logit(agent, neighbors, a_I, b, tau):
 #
 # Attributes
 # - strategy: "C" (adopt EV) or "D" (defect / ICE)
-# - payoff: accumulated payoff from interactions with neighbours
+# - payoff: degree-normalised payoff (average payoff per neighbour) from interactions
 # - next_strategy: strategy chosen for the next time step
 ####################################
 class EVAgent(Agent):
@@ -95,7 +102,7 @@ class EVAgent(Agent):
 
     Attributes
     - strategy: "C" (adopt EV) or "D" (defect / ICE)
-    - payoff: accumulated payoff from interactions with neighbours
+    - payoff: degree-normalised payoff (average payoff per neighbour) from interactions
     - next_strategy: strategy chosen for the next time step
     """
 
@@ -106,13 +113,18 @@ class EVAgent(Agent):
         self.next_strategy = init_strategy
 
     def step(self):
-        """Compute payoff from interactions with neighbours.
+        """Compute degree-normalised payoff from interactions with neighbours.
 
-        Stag Hunt payoff rules:
+        Stag Hunt pairwise payoff rules:
         - C vs C: `a_I` (coordination enhanced by infrastructure)
         - C vs D: 0
         - D vs C: `b`
         - D vs D: `b`
+
+        The round payoff is normalised by the node degree (number of neighbours)
+        to yield the average payoff per interaction:
+        - For strategy D: pi_i(D) = b = 1.0 (constant across all nodes)
+        - For strategy C: pi_i(C) = (k_{i,C} / k_i) * a_I = x_i * a_I
         """
         I = self.model.infrastructure
         a0 = self.model.a0
@@ -139,7 +151,7 @@ class EVAgent(Agent):
                 payoff += b
             else:
                 payoff += b
-        self.payoff = payoff
+        self.payoff = payoff / len(neighbor_agents)
 
     ####################################
     # Advance method
@@ -184,7 +196,7 @@ class EVAgent(Agent):
     # - g_I: infrastructure growth rate
     # - I0: initial infrastructure level
     # - seed: random seed for reproducibility
-    # - network_type: type of network to generate ("random" or "BA")
+    # - network_type: type of network to generate ("random", "BA", or "complete")
     # - n_nodes: number of nodes in the network
     # - p: probability of edge creation in random network
     # - m: number of edges to attach to new node in BA network
@@ -218,6 +230,8 @@ class EVStagHuntModel(Model):
         # Build graph
         if network_type == "BA":
             G = nx.barabasi_albert_graph(n_nodes, m, seed=seed)
+        elif network_type in ["complete", "fully_connected"]:
+            G = nx.complete_graph(n_nodes)
         else:
             G = nx.erdos_renyi_graph(n_nodes, p, seed=seed)
         self.G = G
